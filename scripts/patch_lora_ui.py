@@ -1,53 +1,51 @@
 #
 # extensions/sd-webui-lora-block-weight-ui/scripts/patch_lora_ui.py
 #
-# このスクリプトはコールバックや preload を使わず、
-# 読み込まれた瞬間にグローバルスコープでパッチを即時実行します。
+# This script monkey-patches the LoraUserMetadataEditor to add an "Additional weight" field.
+# It allows users to save/load LBW (LoRA Block Weight) presets directly in the metadata editor.
 #
+
 import gradio as gr
 import re
 import html
 import random
 import datetime
 
-# --- パッチを即時実行 ---
+# --- Attempt to import the target editor class ---
 try:
-    # このスクリプト(scripts/*.py)がロードされる時点では、
-    # 既に 'extensions-builtin' へのパスは通っており、
-    # 'modules.shared' も初期化済みのはずです。
     from ui_edit_user_metadata import LoraUserMetadataEditor, build_tags, re_comma
     if not hasattr(LoraUserMetadataEditor, 'create_editor'):
          raise ImportError("LoraUserMetadataEditor seems to be an unexpected class.")
 
 except ImportError as e:
-    print(f"[sd-webui-lora-block-weight-ui] パッチ対象 'ui_edit_user_metadata' のインポートに失敗。 {e}")
-    # インポートに失敗した場合、以降のコードは実行しない
+    # If import fails, skip patching (e.g., incompatible WebUI version)
+    print(f"[sd-webui-lora-block-weight-ui] Failed to import 'ui_edit_user_metadata'. {e}")
     LoraUserMetadataEditor = None
 
-# --- インポートが成功した場合のみ、パッチを定義・適用 ---
+# --- Apply patch only if the editor class is available ---
 if LoraUserMetadataEditor:
     
-    # --- オリジナルのメソッドを保持 ---
+    # Keep reference to the original __init__
     original_init = LoraUserMetadataEditor.__init__
 
-    # --- 1. 改造版 __init__ ---
+    # --- Patched __init__: Initialize custom fields ---
     def patched_init(self, ui, tabname, page):
         original_init(self, ui, tabname, page) 
         self.edit_additional_weight = None
 
-    # --- 2. 改造版 save_lora_user_metadata ---
+    # --- Patched save_lora_user_metadata: Save 'additional weight' to metadata ---
     def patched_save_lora_user_metadata(self, name, desc, sd_version, activation_text, preferred_weight, additional_weight, negative_text, notes):
         user_metadata = self.get_user_metadata(name)
         user_metadata["description"] = desc
         user_metadata["sd version"] = sd_version
         user_metadata["activation text"] = activation_text
         user_metadata["preferred weight"] = preferred_weight
-        user_metadata["additional weight"] = additional_weight
+        user_metadata["additional weight"] = additional_weight  # Custom field
         user_metadata["negative text"] = negative_text
         user_metadata["notes"] = notes
         self.write_user_metadata(name, user_metadata)
 
-    # --- 3. 改造版 put_values_into_components ---
+    # --- Patched put_values_into_components: Load 'additional weight' into UI ---
     def patched_put_values_into_components(self, name):
         user_metadata = self.get_user_metadata(name)
         values = super(LoraUserMetadataEditor, self).put_values_into_components(name) 
@@ -64,13 +62,13 @@ if LoraUserMetadataEditor:
             gr.HighlightedText.update(value=gradio_tags, visible=True if tags else False),
             user_metadata.get('activation text', ''),
             float(user_metadata.get('preferred weight', 0.0)),
-            user_metadata.get('additional weight', ''), 
+            user_metadata.get('additional weight', ''), # Load custom field
             user_metadata.get('negative text', ''),
             gr.update(visible=True if tags else False),
             gr.update(value=self.generate_random_prompt_from_tags(tags), visible=True if tags else False),
         ]
 
-    # --- 4. 改造版 create_editor (完全上書き) ---
+    # --- Patched create_editor: Override UI layout to include new inputs ---
     def patched_create_editor_full_override(self):
         self.create_default_editor_elems()
 
@@ -78,7 +76,7 @@ if LoraUserMetadataEditor:
         self.edit_activation_text = gr.Text(label='Activation text', info="Will be added to prompt along with Lora")
         self.slider_preferred_weight = gr.Slider(label='Preferred weight', info="Set to 0 to disable", minimum=0.0, maximum=2.0, step=0.01)
         
-        # ▼▼▼ UIコンポーネントを追加 ▼▼▼
+        # Add Input for LoRA Block Weight
         self.edit_additional_weight = gr.Textbox(label="Additional weight", info="for LoRA Block Weight")
         
         self.edit_negative_text = gr.Text(label='Negative prompt', info="Will be added to negative prompts")
@@ -107,7 +105,7 @@ if LoraUserMetadataEditor:
             self.edit_name, self.edit_description, self.html_filedata,
             self.html_preview, self.edit_notes, self.select_sd_version,
             self.taginfo, self.edit_activation_text, self.slider_preferred_weight,
-            self.edit_additional_weight, # <-- 追加
+            self.edit_additional_weight, # Include in view
             self.edit_negative_text, row_random_prompt, random_prompt,
         ]
 
@@ -118,16 +116,16 @@ if LoraUserMetadataEditor:
         edited_components = [
             self.edit_description, self.select_sd_version, self.edit_activation_text,
             self.slider_preferred_weight,
-            self.edit_additional_weight, # <-- 追加
+            self.edit_additional_weight, # Include in save list
             self.edit_negative_text, self.edit_notes,
         ]
 
         self.setup_save_handler(self.button_save, self.save_lora_user_metadata, edited_components)
     
-    # --- パッチをクラスに適用 ---
+    # --- Apply patches to the class ---
     LoraUserMetadataEditor.__init__ = patched_init
     LoraUserMetadataEditor.save_lora_user_metadata = patched_save_lora_user_metadata
     LoraUserMetadataEditor.put_values_into_components = patched_put_values_into_components
     LoraUserMetadataEditor.create_editor = patched_create_editor_full_override
     
-    print("[sd-webui-lora-block-weight-ui] Patch applied successfully (immediate script load).")
+    print("[sd-webui-lora-block-weight-ui] Patch applied successfully to UI editor.")
